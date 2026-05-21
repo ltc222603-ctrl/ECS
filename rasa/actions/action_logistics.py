@@ -22,7 +22,7 @@ from .db_table_class import LogisticsCompany, OrderInfo, Logistics, LogisticsCom
 
 
 # MODEL_PATH = BASE_DIR / "models" / "pruned_distill_bert_model.pt"
-MODEL_PATH = BASE_DIR / "models" / "distill_bert_model_20260510_1811"
+MODEL_PATH = BASE_DIR / "models" / "distill_bert_model_20260510_1811.pt"
 TOKENIZER_DIR = BASE_DIR / "models" / "distilbert-base-zh-cased"
 
 device = torch.device("cpu")

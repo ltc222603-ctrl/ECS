@@ -1,0 +1,124 @@
+flows:
+  switch_user_id:
+    name: 切换用户
+    description: 当用户表达切换当前登录用户或账号的意图时触发 #LLM 判断什么时候该触发这个 flow
+    persisted_slots: # 持久化槽
+      - user_id
+    steps:
+      - collect: user_id
+        description: 用户id，可能直接包含在用户输入中
+        ask_before_filling: true  # 保证每次都触发utter
+
+  #查询订单详情
+  query_order_detail:
+    name: 查询订单详情
+    description: 处理用户查询订单详细信息的请求，包括订单状态、商品明细、订单金额、下单时间和收货信息。适用于用户想查看订单整体信息的场景，不包括退款、取消订单或单独查询物流进度。
+    steps:
+      - set_slots: #查询三天内的订单详细
+        - where_to: action_ask_order_detail_before_3_days
+      - collect: order_id #执行相应utter_ask_order_id:发现没有，action_ask_order_id
+        next: #用户点击按钮后
+          - if: slots.order_id !="false"
+            then: # 查数据库
+              - action: action_get_order_detail
+                next: END
+          - else: END
+
+  # 修改订单收货信息，严格按照以下设定的业务流程
+  modify_order_receive_info:
+    name: 修改订单收货信息
+    description: 处理用户修改订单收货信息的请求，例如“帮我改一下收货地址”“这个订单电话填错了”“收件人名字要改”。适用于修改姓名、电话或地址，不包括取消订单或查询物流。
+    steps:
+      - set_slots: # 查询已签收之前状态的订单，这些订单才能修改信息
+          - where_to: action_ask_order_id_before_delivered # where_to的值设为action_ask_order_id_before_delivered
+      - collect: order_id # button展示给用户，用户选择一个订单
+        next:
+          - if: slots.order_id != "false"
+            then: get_order_detail # 跳转到id为get_order_detail的步骤，显示订单详情
+          - else: END # 如果order_id=false,直接流程结束
+      - id: get_order_detail # 查询此订单的详情
+        action: action_get_order_detail
+      - collect: receive_id # 自动调用action_ask_receive_id，button显示现有的收货信息 或 修改并新建收货信息
+        next:
+          - if: slots.receive_id == "false"
+            then: END # 如果receive_id=false,直接流程结束
+          - if: slots.receive_id == "modify" # 如果receive_id=modify，选择修改订单收货信息的内容
+            then: select_modify_content # 跳转到id为select_modify_content的步骤，选择修改内容
+          - else: confirm_receive_info  # 选择现有的收货信息，跳转到id为confirm_receive_info的步骤，询问是否确认修改订单收货信息
+      - id: select_modify_content # 选择修改订单收货信息的内容
+        collect: modify_content # 收集修改内容，自动调用utter_ask_modify_content，button显示修改内容
+        ask_before_filling: true # 清空槽位重新填充
+        next:
+          - if: slots.modify_content == "收货人姓名" # 如果receive_content=收货人姓名，收集收货人姓名
+            then:
+              - collect: receiver_name # 收集收货人姓名，自动调用 utter_ask_receiver_name
+                description: 姓名
+                ask_before_filling: true # 清空槽位重新填充
+                next: if_modify_continue # 跳转到id为if_modify_continue的步骤，询问是否继续修改其他内容
+          - if: slots.modify_content == "收货人电话" # 如果receive_content=收货人电话，收集收货人电话
+            then:
+              - collect: receiver_phone # 收集收货人电话，自动调用 utter_ask_receiver_phone
+                description: 手机号码
+                ask_before_filling: true # 清空槽位重新填充
+                next: if_modify_continue  # 跳转到id为if_modify_continue的步骤，询问是否继续修改其他内容
+          - if: slots.modify_content == "收货地址" # 如果receive_content=收货地址，收集收货地址
+            then:
+              - collect: receive_province # 收集收货地址的省份，自动调用 action_ask_receive_province，action而不是utter因为要查表
+                ask_before_filling: true # 清空槽位重新填充
+              - collect: receive_city    # 收集收货地址的城市，自动调用 action_ask_receive_city，action而不是utter因为要查表
+                ask_before_filling: true # 清空槽位重新填充
+              - collect: receive_district # 收集收货地址的区县，自动调用 action_ask_receive_district，action而不是utter因为要查表
+                ask_before_filling: true # 清空槽位重新填充
+              - collect: receive_street_address # 收集收货地址的街道地址，自动调用 utter_ask_receive_street_address，需要询问，让用户输入
+                description: 街道地址
+                ask_before_filling: true # 清空槽位重新填充
+                next: if_modify_continue # 收集完收货地址后，跳转到id为if_modify_continue的步骤，询问是否继续修改其他内容
+          # 如果之前已经修改过内容，但是再次修改其他内容时选择了取消
+          - if: slots.receive_id == "modified"
+            then: confirm_receive_info
+          - else: END
+      - id: if_modify_continue # 询问是否继续修改
+        collect: if_modify_continue # 收集是否继续修改内容，自动调用 utter_ask_if_modify_continue，button显示是/否
+        ask_before_filling: true # 清空槽位重新填充
+        next:
+          - if: slots.if_modify_continue # 确认继续修改内容
+            then:
+              - set_slots:
+                  - receive_id: modified  # 设置receive_id为modified，表示已经修改过内容
+                next: select_modify_content # 跳转到id为select_modify_content的步骤，选择修改内容
+          - else: confirm_receive_info # 不继续修改内容，跳转到id为confirm_receive_info的步骤，询问是否确认收货信息
+      - id: confirm_receive_info # 确认修改订单收货信息
+        collect: set_receive_info # 收集 是否确认修改后的订单收货信息，自动调用 action_ask_set_receive_info，返回button显示是/否
+        ask_before_filling: true # 清空槽位重新填充
+        next:
+          - if: slots.set_receive_info # 确认修改后的订单收货信息
+            then:
+              - action: action_ask_set_receive_info # 执行action_ask_set_receive_info，执行新收货信息的入库
+                next: END # 结束流程
+          - else: END # 结束流程
+
+  # 取消订单，严格按照以下设定的业务流程
+  cancel_order:
+    name: 取消订单
+    description: 取消订单
+    steps:
+      - set_slots: # 查询待支付或待发货的订单
+          - where_to: action_ask_order_id_before_shipped
+      - collect: order_id # button展示给用户，用户选择一个订单
+        next:
+          - if: slots.order_id != "false"
+            then: get_order_detail # 跳转到id为get_order_detail的步骤，查询此订单的详情
+          - else: END
+      - id: get_order_detail # 查询此订单的详情
+        action: action_get_order_detail
+      - collect: if_cancel_order # 询问是否取消订单，自动调用utter_ask_if_cancel_order，button显示是/否
+        next:
+          - if: slots.if_cancel_order # 确认取消订单
+            then:
+              - action: action_cancel_order # 执行action_cancel_order，执行订单的取消
+                next: END # 结束流程
+          - else: END # 结束流程
+
+
+
+

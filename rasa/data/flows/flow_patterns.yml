@@ -1,0 +1,25 @@
+flows:
+  pattern_chitchat:
+    name: Pattern Chitchat
+    description: 当用户进行简短闲聊、寒暄、跑题互动，或插入与主任务弱相关的轻量对话时，使用该流程进行自然回应，但不打断当前主要任务或业务流程。
+    steps:
+      - action: utter_chitchat_response
+
+  pattern_search:
+    name: Pattern Search
+    description: >
+      当用户提出纯文本形式的事实查询、知识问答、规则说明、政策解释、
+      操作指引等问题，且需要通过知识库检索来生成答案时，进入该流程。
+
+      不处理图片、照片、拍照、相册、看图识别、图片商品识别、
+      图中商品品牌/型号/类别/库存查询等场景。
+      如果当前输入包含 image_product_query 标记，或 metadata.type 为 image_product_query，
+      必须优先进入 image_product_query，不要进入本流程。
+    steps:
+      - action: action_trigger_search
+
+  pattern_cannot_handle:
+    name: Pattern Cannot Handle
+    description: 当用户请求超出助手当前能力范围，或当前输入无法被正确理解、无法生成有效处理结果、缺少必要条件且无法继续时，进入该流程并向用户说明无法处理。
+    steps:
+      - action: utter_cannot_handle

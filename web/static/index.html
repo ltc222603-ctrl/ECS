@@ -132,11 +132,120 @@
             border: 2px solid transparent;
         }
 
-        #user-input {
+        .composer-row {
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
             width: 100%;
+        }
+
+        #attach-btn {
+            width: 38px;
+            height: 38px;
+            border: 1px solid #d1d5db;
+            border-radius: 50%;
+            background: #fff;
+            color: var(--primary-color);
+            font-size: 26px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        #attach-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .attach-menu {
+            position: absolute;
+            left: 0;
+            bottom: 48px;
+            display: none;
+            flex-direction: column;
+            min-width: 120px;
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            box-shadow: 0 8px 24px #0000002e;
+            z-index: 10;
+        }
+
+        .attach-menu.open {
+            display: flex;
+        }
+
+        .attach-menu button {
+            padding: 10px 12px;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            text-align: left;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        .attach-menu button:hover {
+            background: #eff6ff;
+        }
+
+        .image-preview {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding: 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        .image-preview.show {
+            display: flex;
+        }
+
+        .image-preview img {
+            width: 64px;
+            height: 64px;
+            border-radius: 10px;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
+
+        .image-preview span {
+            flex: 1;
+            font-size: 14px;
+            color: #374151;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .image-preview button {
+            border: none;
+            background: transparent;
+            color: #6b7280;
+            font-size: 22px;
+            cursor: pointer;
+        }
+
+        .message-image {
+            width: 180px;
+            max-width: 100%;
+            border-radius: 12px;
+            object-fit: cover;
+            margin-bottom: 8px;
+        }
+
+        #user-input {
+            flex: 1;
+            width: auto;
             padding: 8px;
             font-size: 16px;
             max-height: 200px;
+            min-height: 38px;
             overflow-y: auto;
             resize: none;
             border: none;
@@ -151,8 +260,7 @@
             border-radius: 8px;
             font-size: 16px;
             cursor: pointer;
-            margin-left: auto;
-            display: block;
+            flex-shrink: 0;
             background-color: var(--primary-color);
         }
 
@@ -242,8 +350,22 @@
     </div>
 
     <div class="input-box">
-        <textarea id="user-input" placeholder="需要我做什么？"></textarea>
-        <button id="send-btn" onclick="sendMessage()">发送</button>
+        <div id="image-preview" class="image-preview">
+            <img id="preview-img" alt="已选择的图片">
+            <span id="preview-name"></span>
+            <button type="button" onclick="clearSelectedImage()">×</button>
+        </div>
+        <div class="composer-row">
+            <button id="attach-btn" type="button" aria-label="添加图片">+</button>
+            <div id="attach-menu" class="attach-menu">
+                <button type="button" onclick="openCameraPicker()">拍照</button>
+                <button type="button" onclick="openGalleryPicker()">相册</button>
+            </div>
+            <textarea id="user-input" placeholder="需要我做什么？"></textarea>
+            <button id="send-btn" onclick="sendMessage()">发送</button>
+        </div>
+        <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
+        <input id="gallery-input" type="file" accept="image/*" hidden>
         <!-- 开发调试用：切换用户 -->
         <!-- <button onclick="switchUser()">切换用户</button> -->
     </div>
@@ -252,7 +374,15 @@
         const dialogArea = document.getElementById('dialog-area');
         const input = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
+        const attachBtn = document.getElementById('attach-btn');
+        const attachMenu = document.getElementById('attach-menu');
+        const cameraInput = document.getElementById('camera-input');
+        const galleryInput = document.getElementById('gallery-input');
+        const imagePreview = document.getElementById('image-preview');
+        const previewImg = document.getElementById('preview-img');
+        const previewName = document.getElementById('preview-name');
         const loadingBubble = createLoadingBubble();
+        let selectedImage = null;
 
         marked.setOptions({ breaks: false });
 
@@ -262,6 +392,25 @@
                 e.preventDefault();   // 阻止换行
                 sendMessage();        // 触发发送
             }
+        });
+
+        attachBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            attachMenu.classList.toggle('open');
+        });
+
+        document.addEventListener('click', function () {
+            attachMenu.classList.remove('open');
+        });
+
+        cameraInput.addEventListener('change', function () {
+            handleImageSelected(cameraInput.files[0]);
+            cameraInput.value = '';
+        });
+
+        galleryInput.addEventListener('change', function () {
+            handleImageSelected(galleryInput.files[0]);
+            galleryInput.value = '';
         });
 
         // ===== 新增：获取 / 生成 userId（不影响原逻辑） =====
@@ -283,18 +432,81 @@
             location.reload();
         }
 
+        function openCameraPicker() {
+            attachMenu.classList.remove('open');
+            cameraInput.click();
+        }
+
+        function openGalleryPicker() {
+            attachMenu.classList.remove('open');
+            galleryInput.click();
+        }
+
+        async function handleImageSelected(file) {
+            if (!file || !file.type.startsWith('image/')) return;
+
+            try {
+                selectedImage = await resizeImage(file);
+                previewImg.src = selectedImage.dataUrl;
+                previewName.textContent = file.name || '图片';
+                imagePreview.classList.add('show');
+            } catch (e) {
+                addMessage('图片读取失败，请重新选择', false);
+            }
+        }
+
+        function clearSelectedImage() {
+            selectedImage = null;
+            previewImg.removeAttribute('src');
+            previewName.textContent = '';
+            imagePreview.classList.remove('show');
+        }
+
+        function resizeImage(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = reject;
+                reader.onload = function () {
+                    const img = new Image();
+                    img.onerror = reject;
+                    img.onload = function () {
+                        const maxSide = 1280;
+                        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(img.width * scale));
+                        canvas.height = Math.max(1, Math.round(img.height * scale));
+
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                        resolve({
+                            name: file.name || 'image.jpg',
+                            type: 'image/jpeg',
+                            size: file.size,
+                            dataUrl: canvas.toDataURL('image/jpeg', 0.85)
+                        });
+                    };
+                    img.src = reader.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
         // 发送消息
         async function sendMessage(payloadText = null) {
             const message = payloadText ?? input.value.trim();
-            if (!message) return;
+            const imageToSend = payloadText ? null : selectedImage;
+            if (!message && !imageToSend) return;
 
             sendBtn.disabled = true;
+            attachBtn.disabled = true;
 
             // 如果是用户输入（不是按钮 payload）
             if (!payloadText) {
-                addMessage(message, true);
+                addMessage(message || '请识别这张图片', true, imageToSend?.dataUrl);
                 input.value = '';
                 input.style.height = 'auto';
+                clearSelectedImage();
             }
 
             dialogArea.appendChild(loadingBubble);
@@ -306,7 +518,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         userId: USER_ID,
-                        message: message
+                        message: message,
+                        image: imageToSend
                     })
                 });
 
@@ -329,6 +542,7 @@
             }
 
             sendBtn.disabled = false;
+            attachBtn.disabled = false;
         }
 
         function addBotMessage(msg) {
@@ -466,7 +680,7 @@
         }
 
         // 添加消息
-        function addMessage(content, isUser) {
+        function addMessage(content, isUser, imageDataUrl = null) {
             const row = document.createElement('div');
             row.className = 'message-row ' + (isUser ? 'user' : 'bot');
 
@@ -478,7 +692,19 @@
             bubble.className = 'message-bubble ' + (isUser ? 'user-message' : 'bot-message');
 
             if (isUser) {
-                bubble.textContent = content;
+                bubble.style.flexDirection = 'column';
+                if (imageDataUrl) {
+                    const img = document.createElement('img');
+                    img.className = 'message-image';
+                    img.src = imageDataUrl;
+                    img.alt = '用户上传的图片';
+                    bubble.appendChild(img);
+                }
+                if (content) {
+                    const text = document.createElement('div');
+                    text.textContent = content;
+                    bubble.appendChild(text);
+                }
                 row.appendChild(bubble);
                 row.appendChild(avatar);
             } else {

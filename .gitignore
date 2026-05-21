@@ -9,6 +9,10 @@ __pycache__/
 venv/
 env/
 
+# Environment secrets
+.env
+*.env
+
 # IDE
 .idea/
 .vscode/
@@ -18,6 +22,9 @@ env/
 
 # Data files
 data/
+!rasa/data/
+!rasa/data/flows/
+!rasa/data/flows/*.yml
 *.csv
 *.tsv
 *.xlsx

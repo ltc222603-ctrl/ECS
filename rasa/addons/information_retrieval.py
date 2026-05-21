@@ -58,6 +58,10 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 
+DEFAULT_QUERY_LIMIT = 10
+SCHEMA_CACHE = {}
+
+
 # 路由输出定义,使用Pydantic定义数据模型
 class RouteItem(BaseModel):
     label: str = Field(..., description="节点类型，比如“SKU”")
@@ -121,6 +125,7 @@ class GraphRAG(InformationRetrieval):
                 SystemMessagePromptTemplate.from_template(
                     "你是一个Cypher专家，正在根据入口节点信息和用户输入，参照schema生成准确无误的Cypher查询语句。"
                     "**注意：查询结果中不可以包含嵌入向量等多余属性**\n"
+                    f"**注意：除非用户明确要求更多结果，所有查询必须添加 LIMIT {DEFAULT_QUERY_LIMIT}**\n"
                     "仅返回Cypher语句。\n"
                     "schema:\n{schema}"
                 ),
@@ -178,21 +183,26 @@ class GraphRAG(InformationRetrieval):
         # Neo4j 驱动
         self.driver = GraphDatabase.driver(neo4j_url, auth=neo4j_auth)
 
-        # 2、获取图数据库schema
-        # Neo4j Graph 包装器
-        neo4j_graph = Neo4jGraph(
-            neo4j_url,
-            neo4j_auth[0],  # 连接Neo4j数据库的用户名
-            neo4j_auth[1],  # 连接Neo4j数据库的密码
-            enhanced_schema=True  # 是否使用增强的schema信息，设为True 提供更详细的schema信息，包括节点标签、关系类型和属性等
-        )
-        # Neo4j schema
-        self.neo4j_schema = neo4j_graph.schema
-        # Neo4j 关系列表
-        corrector_schema = [
-            Schema(el["start"], el["type"], el["end"])
-            for el in neo4j_graph.structured_schema.get("relationships")
-        ]
+        # 2、获取图数据库schema。同一进程内缓存，避免每次初始化都触发 apoc.meta.graphSample()
+        schema_cache_key = (neo4j_url, neo4j_auth)
+        if schema_cache_key in SCHEMA_CACHE:
+            self.neo4j_schema, corrector_schema = SCHEMA_CACHE[schema_cache_key]
+            logger.info("Neo4j schema 使用缓存")
+        else:
+            logger.info("Neo4j schema 开始加载")
+            neo4j_graph = Neo4jGraph(
+                neo4j_url,
+                neo4j_auth[0],  # 连接Neo4j数据库的用户名
+                neo4j_auth[1],  # 连接Neo4j数据库的密码
+                enhanced_schema=True  # 是否使用增强的schema信息，设为True 提供更详细的schema信息，包括节点标签、关系类型和属性等
+            )
+            self.neo4j_schema = neo4j_graph.schema
+            corrector_schema = [
+                Schema(el["start"], el["type"], el["end"])
+                for el in neo4j_graph.structured_schema.get("relationships", [])
+            ]
+            SCHEMA_CACHE[schema_cache_key] = (self.neo4j_schema, corrector_schema)
+            logger.info("Neo4j schema 加载完成")
 
         # 3、初始化 Cypher查询校正器（langchain提供的api）
         self.cypher_corrector = CypherQueryCorrector(corrector_schema)
@@ -308,9 +318,19 @@ class GraphRAG(InformationRetrieval):
             if not i.entity:  # 遍历路由结果中的每一项，如果实体为空则跳过当前项
                 continue
             if i.label == "User":  # 如果标签是"User"，则直接使用Cypher查询在数据库中查找用户节点。
+                user_id_text = str(i.entity)
+                user_id_value = int(user_id_text) if user_id_text.isdigit() else user_id_text
+                logger.info("User入口节点查询:user_id=%s", user_id_text)
                 user_node = self.driver.execute_query(
-                    "match (u:User) where u.user_id = $user_id return u;",
-                    {"user_id": int(i.entity)},
+                    (
+                        "match (u:User) "
+                        "where u.user_id = $user_id or toString(u.user_id) = $user_id_text "
+                        "return u limit 1;"
+                    ),
+                    {
+                        "user_id": user_id_value,
+                        "user_id_text": user_id_text,
+                    },
                 )
                 retrieved_nodes.setdefault(i.label, []).append(user_node)  # 将结果添加到retrieved_nodes字典中
             else:  # 如果不是用户节点，则将标签和实体作为一个元组添加到pairs列表中，供后续检索使用
@@ -499,18 +519,32 @@ class GraphRAG(InformationRetrieval):
             cypher = await self.correct_cypher(query, entry_nodes, cypher, errors)
         # 校正关系方向。如果某个关系和其反向关系都不合法，会返回空字符串
         cypher = self.cypher_corrector(cypher)
+        cypher = ensure_cypher_limit(cypher, DEFAULT_QUERY_LIMIT)
         logger.info("Cypher校正:%s", cypher)
         # 执行 Cypher 语句
         # SearchResultList：rasa中一个专门用于存储搜索结果的类
         res = SearchResultList.from_document_list([Document("空")])
         try:
-            records = self.driver.execute_query(cypher).records
-            docs = [Document(str(dict(rec))) for rec in records]
-            res = SearchResultList.from_document_list(docs)
+            if cypher:
+                records = self.driver.execute_query(cypher).records
+                docs = [Document(str(dict(rec))) for rec in records]
+                res = SearchResultList.from_document_list(docs)
         except Exception as e:
             logger.warning("执行Cypher语句异常: %s", e)
         logger.info("检索结果: %s", res)
         return res
+
+
+def ensure_cypher_limit(cypher: str | None, limit: int = DEFAULT_QUERY_LIMIT) -> str:
+    """给生成的只读 Cypher 查询补 LIMIT，避免意外返回过多数据。"""
+    cypher = (cypher or "").strip()
+    if not cypher:
+        return ""
+
+    if re.search(r"\blimit\s+\d+\b", cypher, flags=re.IGNORECASE):
+        return cypher
+
+    return cypher.rstrip(";").strip() + f"\nLIMIT {limit}"
 
 
 if __name__ == "__main__":
@@ -565,4 +599,3 @@ if __name__ == "__main__":
     # query = "有没有带保湿功能的润唇膏，都是什么品牌的，帮我详细介绍下"
     # query = "帮我推荐oppo的手机"
     asyncio.run(test_retrieval(query))
-
