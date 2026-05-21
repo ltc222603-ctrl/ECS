@@ -1,0 +1,33 @@
+version: "3.1"
+
+slots:
+  #物流id
+  logistics_id:
+    type: text
+    mappings:
+      - type: controlled
+
+  #物流投诉内容
+  complaint_content:
+    type: text
+    mappings:
+        - type: controlled #必须来自固定选项
+
+  #自定义物流投诉
+  other_logistics_complaint:
+    type: text
+    mappings:
+      - type: from_llm #来自用户自然语言
+
+responses:
+  utter_ask_cancel_success:
+    - text: "已成功取消。"
+
+  utter_ask_other_logistics_complaint:
+    - text: "请详细输入此物流遇到的问题。"
+
+actions:
+  - query_get_logistics_company # 查询物流公司
+  - action_get_logistics_info # 查询指定订单id的物流信息
+  - action_ask_complaint_content # 查询投诉原因列表
+  - action_record_logistics_complaint # 记录物流投诉到数据库

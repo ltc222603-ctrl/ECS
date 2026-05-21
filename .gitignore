@@ -1,0 +1,57 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Data files
+data/
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.jsonl
+*.parquet
+*.db
+*.sqlite
+
+# Model / checkpoint files
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.bin
+*.safetensors
+*.ckpt
+*.onnx
+
+# Training outputs / pretrained weights
+fine_tune/pretrained/
+fine_tune/output/
+ComplaintLevel/model/
+rasa/models/
+
+# Archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Local docs / temp files
+说明文档.doc
+~$*
+.DS_Store
+Thumbs.db

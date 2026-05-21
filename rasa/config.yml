@@ -1,0 +1,27 @@
+# The config recipe.
+recipe: default.v1
+
+# The assistant project unique identifier
+# This default value must be replaced with a unique assistant name within your deployment
+assistant_id: smart_ecs
+
+language: zh
+
+pipeline:
+#- name: CompactLLMCommandGenerator 生成 action 执行指令
+- name: SearchReadyLLMCommandGenerator #搜索/检索 先判断是否需要 search 如果是搜索 → 走 search 如果不是 → 才可能走 action
+  llm:
+    model_group: qwen
+  flow_retrieval:
+    active: false #禁用流检索  必须是false否则找不到apikei
+
+# Configuration for Rasa Core.
+policies:
+- name: FlowPolicy #固定业务走 flows
+- name: EnterpriseSearchPolicy #需要知识
+  llm:
+    model_group: qwen
+  embeddings:
+    model_group: embedding_models
+  vector_store:
+    type: "addons.information_retrieval.GraphRAG"

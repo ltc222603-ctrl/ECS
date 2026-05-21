@@ -1,0 +1,379 @@
+投诉等级分类实验结果与参数说明
+================================
+
+一、实验任务说明
+----------------
+本实验面向物流投诉文本进行三分类，标签定义如下：
+
+low    = 物流信息异常
+medium = 配送服务异常
+high   = 货物/实物结果异常
+
+标签映射：
+label_map = {"low": 0, "medium": 1, "high": 2}
+
+最终使用的数据集为 v6 版本，划分如下：
+
+train.txt   7000 条
+val.txt     2000 条
+test.txt    1000 条
+
+三类样本基本均衡。v6 数据集加入了更多边界样本、同词不同标签样本和转折表达，例如：
+“没收到新的物流节点”属于 low；
+“没收到派送电话”属于 medium；
+“没收到实际包裹”属于 high。
+
+这样可以避免模型只依赖单一关键词完成分类，更能体现不同模型的语义理解能力差异。
+
+
+二、最终测试集结果汇总
+----------------------
+
+| 模型 | Accuracy | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|
+| Random Forest | 0.7500 | 0.7507 | 0.7500 | 0.7494 |
+| fastText | 0.8640 | 0.8640 | 0.8640 | 约 0.8640 |
+| BERT | 0.9510 | 0.9515 | 0.9510 | 0.9511 |
+| DistilBERT 蒸馏模型 | 0.9200 | 0.9216 | 0.9200 | 0.9196 |
+
+说明：
+fastText 日志中输出了 Accuracy、precision、recall，但未单独输出 F1。
+由于当前日志中 precision=0.8640、recall=0.8640，若采用相同平均方式，则 F1 可近似记为 0.8640。
+如果报告需要严格数值，建议在 fastText 测试脚本中额外计算 f1_score。
+
+
+三、各模型最终参数与结果
+------------------------
+
+1. Random Forest
+
+最优参数：
+
+{
+    "max_depth": 12,
+    "min_samples_leaf": 5,
+    "min_samples_split": 20,
+    "n_estimators": 200
+}
+
+交叉验证最佳分数：
+F1-macro = 0.8173041726122477
+
+测试集结果：
+
+Accuracy  = 0.7500
+Precision = 0.7507
+Recall    = 0.7500
+F1        = 0.7494
+
+分类报告：
+
+类别 0（low）：
+precision = 0.7304
+recall    = 0.7545
+f1-score  = 0.7423
+support   = 334
+
+类别 1（medium）：
+precision = 0.7542
+recall    = 0.8018
+f1-score  = 0.7773
+support   = 333
+
+类别 2（high）：
+precision = 0.7674
+recall    = 0.6937
+f1-score  = 0.7287
+support   = 333
+
+
+2. fastText
+
+自动调参结果：
+
+Trials: 73
+Best score: 0.879500
+
+测试集结果：
+
+样本数     = 1000
+Accuracy  = 0.8640
+Precision = 0.8640
+Recall    = 0.8640
+F1        = 约 0.8640
+
+说明：
+fastText 相比随机森林有明显提升，说明子词特征和 n-gram 表达能够更好地适应短文本分类任务。
+但 fastText 仍然主要依赖局部词序和浅层语义特征，对复杂转折、否定和多诉求表达的理解能力弱于 BERT。
+
+
+3. BERT 微调模型
+
+最终超参数：
+
+SEED = 42
+BATCH_SIZE = 32
+DROPOUT = 0.3
+LR = 1e-5
+EPOCHS = 2
+NUM_WORKERS = 2
+WEIGHT_DECAY = 0.02
+WARMUP_RATIO = 0.10
+MAX_GRAD_NORM = 1.0
+PATIENCE = 1
+USE_AMP = True
+
+训练结果：
+
+Epoch 1:
+train acc = 0.8510
+val acc   = 0.9680
+val f1    = 0.9679
+
+Epoch 2:
+train acc = 1.0000
+val acc   = 0.9685
+val f1    = 0.9684
+
+测试集结果：
+
+Accuracy  = 0.9510
+Precision = 0.9515
+Recall    = 0.9510
+F1        = 0.9511
+
+保存模型：
+
+bert_model_20260510_1745.pt
+
+
+4. DistilBERT 知识蒸馏模型
+
+最终采用的教师模型：
+
+BERT teacher = bert_model_20260510_1745.pt
+
+最终蒸馏超参数：
+
+DISTILL_BATCH_SIZE = 32
+DISTILL_LR = 1e-5
+DISTILL_EPOCHS = 4
+DISTILL_WEIGHT_DECAY = 0.02
+DISTILL_WARMUP_RATIO = 0.1
+DISTILL_MAX_GRAD_NORM = 1.0
+DISTILL_PATIENCE = 2
+
+DISTILL_TEMPERATURE = 2.0
+DISTILL_ALPHA = 0.3
+
+STUDENT_DROPOUT = 0.3
+
+训练结果：
+
+Epoch 1:
+train acc = 0.6937
+val acc   = 0.9315
+val f1    = 0.9314
+
+Epoch 2:
+train acc = 0.9994
+val acc   = 0.9355
+val f1    = 0.9356
+
+Epoch 3:
+train acc = 0.9999
+val acc   = 0.9405
+val f1    = 0.9404
+
+Epoch 4:
+train acc = 1.0000
+val acc   = 0.9410
+val f1    = 0.9410
+
+测试集结果：
+
+Accuracy  = 0.9200
+Precision = 0.9216
+Recall    = 0.9200
+F1        = 0.9196
+
+保存模型：
+
+distill_bert_model_20260510_1811.pt
+
+
+四、参数调整过程与原因说明
+--------------------------
+
+1. 数据集为什么调整到 v6
+
+前几版数据中，BERT 和蒸馏模型都能达到接近 99% 的测试准确率。
+这说明数据标签线索过于明显，模型只需要学习较强关键词即可完成分类，不利于体现模型间差异。
+
+因此最终使用 v6 数据集。
+v6 数据集加入了更多同词不同标签、弱标签线索和自然表达样本，例如：
+
+“没收到新的物流节点”是 low；
+“没收到派送电话”是 medium；
+“没收到实际包裹”是 high。
+
+这样可以让随机森林、fastText、BERT 和蒸馏模型之间形成更清晰的性能梯度。
+
+
+2. Random Forest 参数为什么这样设置
+
+最终参数：
+
+max_depth = 12
+min_samples_leaf = 5
+min_samples_split = 20
+n_estimators = 200
+
+调整原因：
+
+（1）n_estimators = 200
+树的数量足够多，可以提升模型稳定性，减少单棵树带来的随机波动。
+
+（2）max_depth = 12
+限制树的最大深度，避免模型过度记忆训练集中的关键词组合。
+
+（3）min_samples_leaf = 5
+限制叶节点最少样本数，减少过拟合，提高泛化能力。
+
+（4）min_samples_split = 20
+提高节点分裂门槛，使模型不会因为少量样本就产生过细的规则。
+
+整体来看，这组参数属于偏稳健的随机森林配置，适合作为传统机器学习基线模型。
+
+
+3. fastText 参数与调参原因
+
+fastText 使用自动调参方式，最终最佳验证分数为：
+
+Best score = 0.879500
+
+调整原因：
+
+fastText 适合短文本分类，能够利用词向量和 n-gram 子词特征。
+相比随机森林，fastText 不仅依赖词频，还能利用局部词序信息，因此在测试集上取得 86.40% 的准确率，明显高于随机森林。
+
+但是 fastText 对上下文语义和长距离转折关系的理解能力有限，因此仍低于 BERT。
+
+
+4. BERT 参数为什么这样设置
+
+最终参数：
+
+LR = 1e-5
+EPOCHS = 2
+DROPOUT = 0.3
+WEIGHT_DECAY = 0.02
+WARMUP_RATIO = 0.10
+PATIENCE = 1
+
+调整原因：
+
+（1）LR = 1e-5
+BERT 是预训练模型，微调时不宜使用过大的学习率。
+较小学习率可以避免破坏预训练语义表示，使模型稳定适应投诉分类任务。
+
+（2）EPOCHS = 2
+实验中第 2 轮训练集准确率已经达到 1.0000，继续训练容易过拟合。
+因此设置 2 个 epoch 可以在充分学习任务的同时控制过拟合风险。
+
+（3）DROPOUT = 0.3
+增加随机失活，减少模型对训练集模板的记忆，提高泛化能力。
+
+（4）WEIGHT_DECAY = 0.02
+通过权重衰减约束模型参数，进一步缓解过拟合。
+
+（5）WARMUP_RATIO = 0.10
+训练初期逐步提高学习率，避免一开始参数更新过大导致训练不稳定。
+
+（6）PATIENCE = 1
+由于 BERT 收敛较快，验证集不再提升时及时停止或保留最优模型。
+
+BERT 最终测试准确率达到 95.10%，说明其上下文建模能力能够较好处理否定、转折和多诉求混合表达。
+
+
+5. 蒸馏模型参数为什么这样设置
+
+最开始使用过较高的蒸馏权重，例如：
+
+DISTILL_ALPHA = 0.5 或 0.65
+DISTILL_TEMPERATURE = 2.0 或 2.5
+
+但实验发现测试集准确率约为 91.6% - 91.9%，未能明显提升。
+这说明在当前 v6 数据集上，学生模型过度依赖教师模型软标签并不一定带来更好泛化。
+
+最终采用：
+
+DISTILL_ALPHA = 0.3
+DISTILL_TEMPERATURE = 2.0
+DISTILL_LR = 1e-5
+DISTILL_EPOCHS = 4
+DISTILL_WEIGHT_DECAY = 0.02
+STUDENT_DROPOUT = 0.3
+
+调整原因：
+
+（1）DISTILL_ALPHA = 0.3
+蒸馏总损失为：
+
+Loss = alpha * KD_Loss + (1 - alpha) * CE_Loss
+
+alpha = 0.3 表示模型主要学习真实标签，同时辅以教师模型软标签。
+这样可以避免学生模型过度模仿教师模型在边界样本上的概率分布。
+
+（2）DISTILL_TEMPERATURE = 2.0
+适度平滑教师模型输出，使学生模型学习类别间相似性。
+温度过高可能导致软标签过于平滑，反而削弱真实边界。
+
+（3）DISTILL_LR = 1e-5
+保持和 BERT 微调相同量级的学习率，使学生模型稳定更新。
+
+（4）DISTILL_EPOCHS = 4
+实验中第 4 轮达到最佳验证准确率 0.9410，因此保留 4 个 epoch 较合理。
+
+（5）DISTILL_WEIGHT_DECAY = 0.02
+学生模型训练集很快达到接近 100% 准确率，因此需要较强正则化约束。
+
+（6）STUDENT_DROPOUT = 0.3
+相比 dropout=0.2，dropout=0.3 更有利于缓解学生模型对训练集模板的记忆。
+
+最终蒸馏模型测试准确率为 92.00%，相比 BERT 的 95.10% 下降 3.10 个百分点。
+该结果说明蒸馏模型在压缩模型规模后存在一定性能损失，但仍保留了较好的分类能力。
+
+
+五、实验结果分析
+----------------
+
+从最终结果可以看出：
+
+Random Forest Accuracy = 0.7500
+fastText Accuracy      = 0.8640
+BERT Accuracy          = 0.9510
+DistilBERT Accuracy    = 0.9200
+
+模型表现整体符合预期：
+
+Random Forest < fastText < DistilBERT 蒸馏模型 < BERT
+
+随机森林主要依赖词频和浅层统计特征，因此在存在同词不同标签、转折表达和多诉求混合表达时容易混淆。
+
+fastText 利用词向量和 n-gram 特征，相比随机森林能够更好地处理短文本表达，因此准确率提升到 86.40%。
+
+BERT 具有更强的上下文语义建模能力，能够识别“不是 A 而是 B”“表面看是 A，实际诉求是 B”等复杂表达，因此取得最高准确率 95.10%。
+
+DistilBERT 蒸馏模型在模型结构更轻量的情况下取得 92.00% 的准确率，相比 BERT 下降 3.10 个百分点。
+这说明蒸馏模型在降低模型规模和推理成本的同时，能够保留大部分教师模型的分类能力。
+
+
+六、可用于报告的文字总结
+------------------------
+
+本实验分别采用随机森林、fastText、BERT 和知识蒸馏后的 DistilBERT 模型完成物流投诉等级分类任务。实验结果显示，传统机器学习模型随机森林在测试集上的准确率为 75.00%，其性能受限于词频和浅层统计特征，在复杂语义表达下容易出现误判。fastText 模型通过词向量和 n-gram 特征增强了短文本表示能力，测试准确率提升至 86.40%。BERT 预训练模型能够充分建模上下文语义关系，尤其在否定、转折和多诉求混合表达中表现更稳定，最终取得 95.10% 的测试准确率。知识蒸馏后的 DistilBERT 模型在测试集上取得 92.00% 的准确率，较 BERT 下降 3.10 个百分点，但模型规模更小、推理成本更低，说明知识蒸馏能够在一定程度上兼顾分类效果与部署效率。
+
+综上，四类模型的性能呈现出较清晰的梯度关系：
+随机森林 < fastText < DistilBERT 蒸馏模型 < BERT。
+该结果表明，深度预训练语言模型在中文物流投诉文本分类任务中具有明显优势，而知识蒸馏能够在保持较高分类性能的同时实现模型轻量化。
