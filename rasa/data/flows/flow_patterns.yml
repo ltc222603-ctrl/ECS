@@ -7,14 +7,7 @@ flows:
 
   pattern_search:
     name: Pattern Search
-    description: >
-      当用户提出纯文本形式的事实查询、知识问答、规则说明、政策解释、
-      操作指引等问题，且需要通过知识库检索来生成答案时，进入该流程。
-
-      不处理图片、照片、拍照、相册、看图识别、图片商品识别、
-      图中商品品牌/型号/类别/库存查询等场景。
-      如果当前输入包含 image_product_query 标记，或 metadata.type 为 image_product_query，
-      必须优先进入 image_product_query，不要进入本流程。
+    description: 当用户提出事实查询、知识问答、规则说明、产品信息、政策解释、操作指引等问题，且需要通过知识库检索来生成答案时，进入该流程。
     steps:
       - action: action_trigger_search
 

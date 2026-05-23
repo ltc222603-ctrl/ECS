@@ -1,3 +1,13 @@
+"""图片查询 Action。
+
+大致流程：
+1. FastAPI 把图片 dataUrl、图片信息和用户问题放到 metadata 后，直接调用这个 action。
+2. action 先通过 LangChain 调用视觉大模型，识别图片中的商品实体，并生成判断依据 reason。
+3. 把识别出来的实体和 reason 拼成检索问题，复用 information_retrieval.py 里的 GraphRAG 查询数据库。
+4. 如果数据库有结果，就把数据库结果和 reason 一起交给大模型生成回复。
+5. 如果数据库没查到，就按“此图片查询的数据不在数据库中...”的提示生成兜底回复。
+"""
+
 from __future__ import annotations
 
 import json
@@ -5,54 +15,37 @@ import logging
 import os
 import re
 import sys
-import importlib.util
 from pathlib import Path
-from typing import Any, Dict, List, Text, cast
+from typing import Any
 
 import dotenv
 import requests
 import yaml
+from langchain.prompts import ChatPromptTemplate
 from langchain_core.embeddings import Embeddings
+from langchain_openai import ChatOpenAI
 from rasa.utils.endpoints import EndpointConfig
 from rasa_sdk import Action, Tracker
 from rasa_sdk.executor import CollectingDispatcher
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PROJECT_DIR = BASE_DIR.parent
-INFORMATION_RETRIEVAL_PATH = BASE_DIR / "addons" / "information_retrieval.py"
 
-for path in (PROJECT_DIR, BASE_DIR):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+# action server 从 rasa 目录启动时，直接把 rasa 目录加进路径，方便复用 addons。
+if str(BASE_DIR) not in sys.path:
+    sys.path.append(str(BASE_DIR))
 
-spec = importlib.util.spec_from_file_location(
-    "ecs_addons_information_retrieval",
-    INFORMATION_RETRIEVAL_PATH,
-)
-if spec is None or spec.loader is None:
-    raise ImportError(f"Cannot load GraphRAG from {INFORMATION_RETRIEVAL_PATH}")
-
-information_retrieval = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(information_retrieval)
-GraphRAG = cast(Any, information_retrieval).GraphRAG
+from addons.information_retrieval import GraphRAG
 
 logger = logging.getLogger(__name__)
 
-IMAGE_QUERY_MARKER = "[image_product_query]"
 DEFAULT_IMAGE_QUESTION = "请识别图片中的商品并查询相关信息"
 
 _RETRIEVAL: GraphRAG | None = None
-
-
-class ModelCallError(RuntimeError):
-    def __init__(self, status_code: int, response_text: str) -> None:
-        self.status_code = status_code
-        self.response_text = response_text
-        super().__init__(f"model api returned {status_code}: {response_text[:500]}")
+_CHAT_MODEL: ChatOpenAI | None = None
 
 
 class OpenAICompatibleEmbeddings(Embeddings):
-    """Use the local embedding service with an OpenAI-compatible API."""
+    """调用本地 embedding 服务，接口格式兼容 OpenAI。"""
 
     def __init__(self, api_base: str, api_key: str | None, model: str) -> None:
         self.api_base = api_base
@@ -77,20 +70,20 @@ class OpenAICompatibleEmbeddings(Embeddings):
 
 
 class ActionImageProductQuery(Action):
-    def name(self) -> Text:
+    def name(self) -> str:
         return "action_image_product_query"
 
     async def run(
         self,
         dispatcher: CollectingDispatcher,
         tracker: Tracker,
-        domain: Dict[Text, Any],
-    ) -> List[Dict[Text, Any]]:
+        _domain: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         metadata = tracker.latest_message.get("metadata") or {}
         image_payload = metadata.get("image") or {}
         image_data_url = image_payload.get("dataUrl")
         user_text = (metadata.get("user_text") or "").strip()
-        user_text = user_text or _strip_image_marker(tracker.latest_message.get("text"))
+        user_text = user_text or (tracker.latest_message.get("text") or "").strip()
         user_text = user_text or DEFAULT_IMAGE_QUESTION
 
         logger.info(
@@ -107,11 +100,12 @@ class ActionImageProductQuery(Action):
             dispatcher.utter_message(text="请先上传一张图片，再告诉我想查询什么。")
             return []
 
+        # 先让视觉模型抽取实体和判断依据，后面再用这些信息查询图数据库。
         try:
             image_analysis = _extract_image_entities(image_data_url, user_text)
         except Exception as exc:
             logger.exception("Image entity extraction failed: %s", exc)
-            dispatcher.utter_message(text=_format_image_parse_error(exc))
+            dispatcher.utter_message(text=f"图片解析失败：{_compact_text(str(exc))}")
             return []
 
         reason = image_analysis.get("reason") or "图片可见信息不足，无法给出明确判断依据。"
@@ -121,6 +115,7 @@ class ActionImageProductQuery(Action):
         retrieval_query = _build_retrieval_query(user_text, image_analysis)
         logger.info("图生文 GraphRAG 查询: %s", retrieval_query)
 
+        # 这里复用原来的 GraphRAG，不重新写数据库连接逻辑。
         try:
             search_results = await _get_retrieval().search(
                 retrieval_query,
@@ -177,18 +172,24 @@ def _extract_image_entities(image_data_url: str, user_text: str) -> dict[str, An
         "请识别图片中的商品、品牌、品类、型号、颜色、关键属性等。"
         "reason 示例：图片中可见 Apple 标志和竖向双摄，但没有显示包装盒、型号文字或系统页面，无法完全确认具体型号。"
     )
-
-    content = _chat_completion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_prompt},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            (
+                "human",
+                [
+                    {"type": "text", "text": "{user_prompt}"},
+                    {"type": "image_url", "image_url": {"url": "{image_data_url}"}},
                 ],
-            },
-        ],
+            ),
+        ]
+    )
+    content = _chat_completion(
+        prompt,
+        {
+            "user_prompt": user_prompt,
+            "image_data_url": image_data_url,
+        },
         response_format={"type": "json_object"},
     )
     try:
@@ -223,24 +224,32 @@ def _generate_final_answer(
             "不要声称已经真实联网检索到了额外证据。"
         )
 
-    user_prompt = (
-        f"用户问题：{user_text}\n\n"
-        f"抽取实体：{json.dumps(entities, ensure_ascii=False)}\n\n"
-        f"上下文：\n{context}\n\n"
-        "请生成最终回复。"
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            (
+                "human",
+                "用户问题：{user_text}\n\n"
+                "抽取实体：{entities}\n\n"
+                "上下文：\n{context}\n\n"
+                "请生成最终回复。",
+            ),
+        ]
     )
-
     return _chat_completion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        prompt,
+        {
+            "user_text": user_text,
+            "entities": json.dumps(entities, ensure_ascii=False),
+            "context": context,
+        },
     ).strip()
 
 
 def _get_retrieval() -> GraphRAG:
     global _RETRIEVAL
 
+    # GraphRAG 初始化较慢，缓存起来给后续图片请求复用。
     if _RETRIEVAL is not None:
         return _RETRIEVAL
 
@@ -359,11 +368,37 @@ def _normalize_image_analysis(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _chat_completion(
-    messages: list[dict[str, Any]],
+    prompt: ChatPromptTemplate,
+    variables: dict[str, Any] | None = None,
     response_format: dict[str, str] | None = None,
 ) -> str:
-    dotenv.load_dotenv(BASE_DIR / ".env")
+    langchain_messages = prompt.format_messages(**(variables or {}))
+    chat_model = _get_chat_model()
 
+    try:
+        if response_format:
+            chat_model = chat_model.bind(response_format=response_format)
+        response = chat_model.invoke(langchain_messages)
+    except Exception as exc:
+        if not response_format:
+            raise RuntimeError(f"视觉模型调用失败: {_compact_text(str(exc))}") from exc
+
+        # 有些兼容接口不支持 response_format，失败后按普通对话再调用一次。
+        try:
+            response = _get_chat_model().invoke(langchain_messages)
+        except Exception as retry_exc:
+            raise RuntimeError(f"视觉模型调用失败: {_compact_text(str(retry_exc))}") from retry_exc
+
+    return _message_content_to_text(response.content)
+
+
+def _get_chat_model() -> ChatOpenAI:
+    global _CHAT_MODEL
+
+    if _CHAT_MODEL is not None:
+        return _CHAT_MODEL
+
+    dotenv.load_dotenv(BASE_DIR / ".env")
     api_key = os.getenv("OPENAI_API_KEY2") or os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL2") or os.getenv("OPENAI_BASE_URL")
     model = os.getenv("OPENAI_MODEL2") or os.getenv("OPENAI_MODEL")
@@ -374,39 +409,29 @@ def _chat_completion(
             "或 OPENAI_API_KEY、OPENAI_BASE_URL、OPENAI_MODEL。"
         )
 
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0,
-    }
-
-    if response_format:
-        payload["response_format"] = response_format
-
-    response = requests.post(
-        _join_api_path(base_url, "chat/completions"),
-        headers=_headers(api_key),
-        json=payload,
-        timeout=180,
+    _CHAT_MODEL = ChatOpenAI(
+        model=model,
+        api_key=api_key,
+        base_url=_clean_chat_base_url(base_url),
+        temperature=0,
     )
+    return _CHAT_MODEL
 
-    if response.status_code >= 400 and response_format:
-        payload.pop("response_format", None)
-        response = requests.post(
-            _join_api_path(base_url, "chat/completions"),
-            headers=_headers(api_key),
-            json=payload,
-            timeout=180,
-        )
 
-    if response.status_code >= 400:
-        raise ModelCallError(response.status_code, response.text)
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
 
-    try:
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except Exception as exc:
-        raise ModelCallError(response.status_code, response.text) from exc
+    if isinstance(content, list):
+        texts = []
+        for item in content:
+            if isinstance(item, dict):
+                texts.append(str(item.get("text", "")))
+            else:
+                texts.append(str(item))
+        return "".join(texts)
+
+    return str(content)
 
 
 def _extract_json_object(content: str) -> dict[str, Any]:
@@ -420,11 +445,6 @@ def _extract_json_object(content: str) -> dict[str, Any]:
         raise ValueError(f"模型未返回 JSON 对象: {content}")
 
     return json.loads(match.group())
-
-
-def _strip_image_marker(text: str | None) -> str:
-    text = (text or "").replace(IMAGE_QUERY_MARKER, "").strip()
-    return re.sub(r"^用户上传了一张商品图片。用户问题：", "", text).strip()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -453,23 +473,15 @@ def _join_api_path(base_url: str, path: str) -> str:
     return f"{clean_base}/{clean_path}"
 
 
+def _clean_chat_base_url(base_url: str) -> str:
+    return re.sub(r"/chat/completions/?$", "", base_url.rstrip("/"))
+
+
 def _headers(api_key: str | None) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
-
-
-def _format_image_parse_error(exc: Exception) -> str:
-    if isinstance(exc, ModelCallError):
-        response_text = _compact_text(exc.response_text)
-        return (
-            f"图片解析失败：视觉模型接口返回 {exc.status_code}。\n"
-            "请检查视觉模型的 API Key、Base URL、模型名称是否可用，并确认该模型支持图片输入。\n"
-            f"接口返回：{response_text}"
-        )
-
-    return f"图片解析失败：{_compact_text(str(exc))}"
 
 
 def _compact_text(text: str, max_length: int = 500) -> str:

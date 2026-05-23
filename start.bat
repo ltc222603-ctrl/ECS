@@ -10,15 +10,16 @@ echo Starting ECS Services (rasapro)
 echo ================================
 
 REM === Rasa Core ===
-start "Rasa Core" cmd /k "cd /d %BASE_DIR%rasa && %PYTHON_EXE% -m rasa run --enable-api"
+start "Rasa Core" /D "%BASE_DIR%rasa" cmd /k call "%PYTHON_EXE%" -m rasa run --enable-api
 
 REM === Rasa Actions ===
-start "Rasa Actions" cmd /k "cd /d %BASE_DIR%rasa && set SANIC_RESPONSE_TIMEOUT=300 && %PYTHON_EXE% -m rasa run actions"
+REM Image query may be slow, SANIC_RESPONSE_TIMEOUT is set above.
+start "Rasa Actions" /D "%BASE_DIR%rasa" cmd /k call "%PYTHON_EXE%" -m rasa run actions
 
 REM === FastAPI ===
-start "FastAPI" cmd /k "cd /d %BASE_DIR% && %PYTHON_EXE% -m uvicorn web.main:app --reload --port 8000"
+start "FastAPI" /D "%BASE_DIR%" cmd /k call "%PYTHON_EXE%" -m uvicorn web.main:app --reload --port 8000
 
 REM === Embedding Service ===
-start "Embedding Service" cmd /k "cd /d %BASE_DIR%rasa\addons && %PYTHON_EXE% -m uvicorn embed_service:app --port 10010"
+start "Embedding Service" /D "%BASE_DIR%rasa\addons" cmd /k call "%PYTHON_EXE%" -m uvicorn embed_service:app --port 10010
 
 echo All services started.

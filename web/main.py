@@ -21,6 +21,7 @@ app.add_middleware(
 RASA_REST_URL = "http://localhost:5005/webhooks/rest/webhook"
 RASA_TRACKER_URL = "http://localhost:5005/conversations/{sender_id}/tracker"
 RASA_ACTION_URL = "http://localhost:5055/webhook"
+DEFAULT_IMAGE_MESSAGE = "请识别图片中的商品并查询相关信息"
 
 # ===== 响应接口 =====
 @app.post("/api/chat")
@@ -37,6 +38,7 @@ def chat(req: ChatRequest):
             else req.image.dict(exclude_none=True)
         )
     if image_payload:
+        # 图片消息直接走 action server，避免被 EnterpriseSearchPolicy 当成知识库搜索。
         logger.info(
             "收到图片消息: sender=%s, text=%s, image_name=%s, image_type=%s, image_size=%s",
             req.userId,
@@ -55,7 +57,7 @@ def chat(req: ChatRequest):
     try:
         rasa_resp = requests.post(RASA_REST_URL, json=payload, timeout=300)
         rasa_resp.raise_for_status()
-    except Exception as e:
+    except Exception:
         return {
             "message": "Rasa 服务暂时不可用，请稍后再试"
         }
@@ -79,6 +81,7 @@ def call_image_action(user_id: str, message: str, image_payload: dict):
     图片消息直接调用 Rasa Action Server，避免被 EnterpriseSearchPolicy 当知识库搜索处理。
     """
     slots = get_rasa_tracker_slots(user_id)
+    user_message = message or DEFAULT_IMAGE_MESSAGE
     logger.info("图片消息使用 tracker slots: sender=%s, user_id=%s", user_id, slots.get("user_id"))
     metadata = {
         "type": "image_product_query",
@@ -94,13 +97,13 @@ def call_image_action(user_id: str, message: str, image_payload: dict):
             "latest_message": {
                 "intent": {"name": "image_product_query_intent", "confidence": 1.0},
                 "entities": [],
-                "text": message or "请识别图片中的商品并查询相关信息",
+                "text": user_message,
                 "metadata": metadata,
             },
             "events": [
                 {
                     "event": "user",
-                    "text": message or "请识别图片中的商品并查询相关信息",
+                    "text": user_message,
                     "metadata": metadata,
                 }
             ],
