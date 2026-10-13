@@ -62,3 +62,8 @@ rasa/models/
 ~$*
 .DS_Store
 Thumbs.db
+
+# Local connection configuration and Rasa runtime caches
+/rasa/actions/db.py
+/rasa/endpoints.yml
+/rasa/.rasa/
