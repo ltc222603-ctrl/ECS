@@ -1,0 +1,7 @@
+ragas==0.4.3
+openai>=1.105.0,<3
+# RAGAS 0.4.3 still imports the pre-1.0 LangChain compatibility modules.
+langchain<1
+langchain-core<1
+langchain-community<0.4
+langchain-openai<1
