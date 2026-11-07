@@ -150,8 +150,7 @@ ECS
 ├── ComplaintLevel        # 配送に関する苦情の重要度分類モデル
 ├── evaluation            # 検索・回答とCypherの評価コード
 │   ├── cypher_evaluate.py # Cypherの構文・実行計画の検証
-│   ├── ragas_evaluate.py
-│   └── requirements.txt
+│   └── ragas_evaluate.py
 ├── fine_tune             # モデルのファインチューニング関連ファイル
 ├── images                # システム画像・商品画像・構成図
 │   └── architecture_ja.png  # 日本語版システム構成図

@@ -1,17 +1,3 @@
-"""使用 RAGAS 评价 GraphRAG 的检索结果和最终回答。
-
-安装：pip install -r evaluation/requirements.txt
-配置环境变量：RAGAS_EVAL_API_KEY、RAGAS_EVAL_MODEL，
-以及可选的 RAGAS_EVAL_BASE_URL（OpenAI 兼容接口地址）。
-运行：python evaluation/ragas_evaluate.py --input <测试记录.jsonl>
-
-输入文件每行是一个 JSON 对象，包含：
-user_input（问题）、retrieved_contexts（按原顺序保存的文本列表）、
-response（实际生成的回答）、reference（人工核验的参考答案）。
-retrieved_contexts 应使用实际传给回答模型的 Neo4j 查询结果，
-不要填写 Cypher 语句或入口节点候选。本仓库不附测试数据。
-"""
-
 import argparse
 import asyncio
 import csv

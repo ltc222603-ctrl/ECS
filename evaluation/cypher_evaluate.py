@@ -1,15 +1,3 @@
-"""统计 Cypher 的 EXPLAIN 验证通过率，不实际执行查询。
-
-环境变量：NEO4J_URI、NEO4J_PASSWORD，
-以及可选的 NEO4J_USERNAME、NEO4J_DATABASE（默认均为 neo4j）。
-运行：python evaluation/cypher_evaluate.py --input <查询记录.jsonl>
-
-外部 JSONL 每行包含 cypher（原始查询），可选 corrected_cypher
-（已有的修复后查询）、parameters 和 corrected_parameters。
-本脚本只验证已有查询，不生成或修复 Cypher，也不调用评价 LLM。
-通过 EXPLAIN 不代表查询结果正确，或满足用户的业务意图。
-"""
-
 import argparse
 import csv
 import json
