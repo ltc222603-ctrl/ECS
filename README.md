@@ -179,7 +179,7 @@ GraphRAGの検索結果と最終回答を評価するため、[RAGAS評価スク
 - Neo4j
 - GraphRAG
 - RAGAS
-- LLM：Doubao（OpenAI互換APIで接続。モデルは環境変数で切り替え可能）
+- LLM：Qwen（OpenAI互換APIで接続。モデルは環境変数で切り替え可能）
 - LoRA（Qwen2.5-3B-Instruct）
 - BERT / fastText / Random Forest
 - マルチモーダル大規模言語モデル
