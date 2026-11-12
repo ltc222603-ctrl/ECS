@@ -1,4 +1,3 @@
-[ECS_README.md](https://github.com/user-attachments/files/34741547/ECS_README.md)
 # ECS — EC向けインテリジェントカスタマーサポートシステム
 
 Rasa Pro・GraphRAG（Neo4j）・LLMを組み合わせた、ECサイト向けの問い合わせ対応システムです。
