@@ -1,4 +1,13 @@
-# ECS
+[ECS_README.md](https://github.com/user-attachments/files/34741547/ECS_README.md)
+# ECS — EC向けインテリジェントカスタマーサポートシステム
+
+Rasa Pro・GraphRAG（Neo4j）・LLMを組み合わせた、ECサイト向けの問い合わせ対応システムです。
+
+- **開発体制・期間**：個人開発（約6か月）
+- **主な成果**
+  - Cypherの`EXPLAIN`検証通過率：**78% → 90%**（100件、LLMによる検証・修正の導入前後）
+  - RAGAS（100問）：検索結果の関連性 **0.75 → 0.86**、回答の忠実度 **0.84 → 0.92** ほか、全4指標が向上
+  - 苦情の重要度分類（3クラス）：BERTで**正解率95.1%**（RandomForest 75.0%、fastText 86.4%）
 
 ## システム構成図
 
@@ -37,6 +46,15 @@ ECのカスタマーサポートでよく利用される、以下の注文関連
 - high（高）
 
 このモデルは、苦情対応の優先順位の判断を支援し、対応効率の向上に役立てます。
+
+学習7,000件・検証2,000件・テスト1,000件のデータセット（3クラスほぼ均等）で、ベースラインと比較しました。テストデータでの結果は以下のとおりです（詳細は[実験レポート](complaint_level_experiment_report.txt)）。
+
+| モデル | Accuracy | F1 |
+|---|---:|---:|
+| Random Forest | 0.750 | 0.749 |
+| fastText | 0.864 | 約0.864 |
+| **BERT（ファインチューニング）** | **0.951** | **0.951** |
+| DistilBERT（蒸留モデル） | 0.920 | 0.920 |
 
 ### 3. 商品相談・Q&A
 
@@ -96,7 +114,18 @@ GraphRAGの検索結果と最終回答を評価するため、[RAGAS評価スク
 
 サンプルごとのスコアをCSV、各指標の平均スコアをJSONに保存します。Cypherの実行成功率や注文操作の成否は、このスクリプトの評価対象には含まれません。
 
-現在は評価コードを実装し、模擬的な評価モデルを使って動作確認を行った段階です。実データと実際の評価モデルによるスコアは未計測です。テストデータと評価出力はリポジトリに含めません。
+### 評価結果
+
+100問のテストセットで、検索・生成の改善前後を比較しました。
+
+| 評価指標 | 内容 | 改善前 | 改善後 |
+|---|---|---:|---:|
+| Context Precision | 検索結果の関連性 | 0.75 | **0.86** |
+| Context Recall | 必要情報の十分性 | 0.77 | **0.89** |
+| Faithfulness | 回答の忠実度 | 0.84 | **0.92** |
+| Factual Correctness | 正解との一致度 | 0.76 | **0.87** |
+
+指標ごとに見ることで、問題が「検索側」か「生成側」かを切り分け、改善につなげました。テストデータと評価出力はリポジトリに含めません。
 
 ## Cypherの検証通過率
 
@@ -110,7 +139,19 @@ GraphRAGの検索結果と最終回答を評価するため、[RAGAS評価スク
 
 個別の検証結果とエラーコードをCSV、件数と通過率をJSONに保存します。認証・権限・接続などの異常は、クエリの検証失敗とは区別します。`EXPLAIN`はクエリを実行しないため、これらの指標は実行成功率やユーザーの意図に対する正解率を示すものではありません。
 
-コードを実装し、模擬セッションによる動作確認を行っています。実データによる通過率は未計測です。テストデータと評価出力はリポジトリに含めません。
+### 評価結果
+
+100件のテストで、LLMによる検証・修正の導入前後を比較しました。
+
+| 指標 | 導入前 | 導入後 |
+|---|---:|---:|
+| `EXPLAIN`検証通過率 | 78%（78/100件） | **90%（90/100件）** |
+
+初回の検証に失敗した22件のうち12件が、エラー情報を使った修正で通過しました。テストデータと評価出力はリポジトリに含めません。
+
+## 意図認識LLMのLoRA微調整
+
+実際のユーザー発話に対応するFlowのトリガーを付与し、言い換え・表現拡張で学習データを作成しました。[学習スクリプト](fine_tune/src/train.py)では、Qwen2.5-3B-InstructをLoRA（r=16、lora_alpha=32、lora_dropout=0.05、3エポック）でファインチューニングしています。
 
 ## システムアーキテクチャ
 
@@ -139,6 +180,9 @@ GraphRAGの検索結果と最終回答を評価するため、[RAGAS評価スク
 - Neo4j
 - GraphRAG
 - RAGAS
+- LLM：Doubao（OpenAI互換APIで接続。モデルは環境変数で切り替え可能）
+- LoRA（Qwen2.5-3B-Instruct）
+- BERT / fastText / Random Forest
 - マルチモーダル大規模言語モデル
 - Base64画像エンコーディング
 - 機械学習による分類モデル
@@ -159,4 +203,46 @@ ECS
 ├── README.md             # プロジェクト説明
 ├── complaint_level_experiment_report.txt
 └── start.bat             # 起動スクリプト
+```
+
+## 実行方法
+
+### 前提
+
+- Python環境（Rasa Proが動作するもの。Rasa Proのライセンスキーは環境変数`RASA_PRO_LICENSE`で設定）
+- MySQL（注文・配送・アフターサービスの業務データ）
+- Neo4j（商品ナレッジグラフ）
+- OpenAI互換APIで利用できるLLM
+
+### 設定
+
+接続情報はリポジトリに含めていません。以下を各自の環境で用意してください。
+
+| ファイル・環境変数 | 内容 |
+|---|---|
+| `.env` | `OPENAI_API_KEY1` / `OPENAI_BASE_URL1` / `OPENAI_MODEL1`：GraphRAG用LLM<br>`OPENAI_API_KEY2` / `OPENAI_BASE_URL2` / `OPENAI_MODEL2`：画像認識用マルチモーダルモデル<br>`NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_PASSWORD` |
+| `rasa/endpoints.yml` | Rasa ProのLLM・Embeddingのモデルグループ、Action Serverの設定 |
+| `rasa/actions/db.py` | MySQLの接続設定 |
+
+### 起動
+
+`start.bat`内の`PYTHON_EXE`を自分の環境のPythonに変更してから実行します。以下の4つのサービスが起動します。
+
+| サービス | コマンド | ポート |
+|---|---|---|
+| Rasa Core | `python -m rasa run --enable-api`（`rasa/`で実行） | 5005 |
+| Rasa Action Server | `python -m rasa run actions`（`rasa/`で実行） | 5055 |
+| FastAPI（Web画面・API） | `python -m uvicorn web.main:app --port 8000` | 8000 |
+| Embeddingサービス | `python -m uvicorn embed_service:app --port 10010`（`rasa/addons/`で実行） | 10010 |
+
+起動後、ブラウザで http://localhost:8000 を開くとチャット画面を利用できます。
+
+### 評価スクリプト
+
+```bash
+# RAGAS評価（評価用LLMは RAGAS_EVAL_API_KEY / RAGAS_EVAL_BASE_URL / RAGAS_EVAL_MODEL で指定）
+python evaluation/ragas_evaluate.py --input <実行記録.jsonl> --output-dir evaluation/results
+
+# Cypherの検証通過率（NEO4J_URI / NEO4J_PASSWORD が必要）
+python evaluation/cypher_evaluate.py --input <クエリ記録.jsonl> --output-dir evaluation/results/cypher
 ```
